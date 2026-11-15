@@ -40,6 +40,7 @@ EVALUATION_QUERIES = [
     EvaluationQuery(
         query="What dental and vision benefits are available?",
         relevant_chunk_ids={
+            "employee_benefits-page-1-chunk-0",
             "employee_benefits-page-1-chunk-1",
         },
     ),
@@ -89,7 +90,6 @@ EVALUATION_QUERIES = [
             "leave_attendance_policy-page-1-chunk-2",
         },
     ),
-
     EvaluationQuery(
         query="When must new employees complete benefits enrollment?",
         relevant_chunk_ids={
@@ -163,7 +163,6 @@ EVALUATION_QUERIES = [
     EvaluationQuery(
         query="Who is responsible for requesting system access for new employees?",
         relevant_chunk_ids={
-            "it_security_policy-page-1-chunk-1",
             "it_security_policy-page-1-chunk-2",
         },
     ),
@@ -206,6 +205,5 @@ EVALUATION_QUERIES = [
             "leave_attendance_policy-page-1-chunk-1",
         },
     ),
-
 ]
 

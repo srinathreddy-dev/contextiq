@@ -1,6 +1,6 @@
 
-from openai import OpenAI
 import numpy as np
+from openai import OpenAI
 
 from app.core.config import settings
 from app.ingestion.chunker import TextChunk
@@ -19,13 +19,19 @@ class SemanticEmbedder:
                 raise ValueError(
                     "OPENAI_API_KEY must be configured for embeddings."
                 )
-            client = OpenAI(api_key=settings.openai_api_key)
+
+            client = OpenAI(
+                api_key=settings.openai_api_key,
+                timeout=settings.openai_timeout_seconds,
+                max_retries=settings.openai_max_retries,
+            )
 
         self.client = client
         self.model_name = model_name
 
     def embed_chunks(self, chunks: list[TextChunk]):
         """Generate normalized embeddings for document chunks."""
+
         texts = [chunk.text for chunk in chunks]
 
         if not texts:
@@ -37,10 +43,12 @@ class SemanticEmbedder:
         )
 
         vectors = [item.embedding for item in response.data]
+
         return self._normalize(vectors)
 
     def embed_query(self, query: str):
         """Generate a normalized embedding for a search query."""
+
         if not query.strip():
             raise ValueError("Query cannot be empty.")
 
@@ -54,6 +62,13 @@ class SemanticEmbedder:
     @staticmethod
     def _normalize(vectors):
         """Normalize vectors to unit length."""
+
         matrix = np.asarray(vectors, dtype=np.float32)
-        norms = np.linalg.norm(matrix, axis=-1, keepdims=True)
+
+        norms = np.linalg.norm(
+            matrix,
+            axis=-1,
+            keepdims=True,
+        )
+
         return matrix / np.maximum(norms, 1e-12)

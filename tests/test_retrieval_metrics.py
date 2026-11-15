@@ -1,3 +1,4 @@
+
 import pytest
 
 from app.evaluation.retrieval_metrics import (
@@ -131,10 +132,7 @@ def test_mean_reciprocal_rank_rejects_mismatched_lengths():
     ]
 
     with pytest.raises(ValueError, match="same length"):
-        mean_reciprocal_rank(
-            queries,
-            [],
-        )
+        mean_reciprocal_rank(queries, [])
 
 
 def test_recall_at_k_rejects_invalid_k():
@@ -144,6 +142,7 @@ def test_recall_at_k_rejects_invalid_k():
             relevant_chunk_ids={"page-1-chunk-0"},
             k=0,
         )
+
 
 def test_precision_at_k_calculates_correct_score():
     score = precision_at_k(
@@ -188,14 +187,14 @@ def test_precision_at_k_returns_zero_for_empty_results():
     ) == 0.0
 
 
-def test_precision_at_k_uses_actual_result_count():
+def test_precision_at_k_uses_k_as_denominator_for_short_results():
     score = precision_at_k(
         retrieved_chunk_ids=["chunk-1", "chunk-2"],
         relevant_chunk_ids={"chunk-1"},
         k=5,
     )
 
-    assert score == 0.5
+    assert score == pytest.approx(1 / 5)
 
 
 def test_precision_at_k_rejects_invalid_k():

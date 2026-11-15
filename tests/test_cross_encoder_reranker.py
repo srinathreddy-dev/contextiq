@@ -267,3 +267,147 @@ def test_reranker_matches_sick_leave_concepts():
     )
 
     assert ranked[0].result.chunk.chunk_id == sick_leave_chunk.chunk_id
+
+
+def test_reranker_prefers_specific_password_policy_chunk():
+    reranker = CrossEncoderReranker()
+
+    password_chunk = TextChunk(
+        text=(
+            "Passwords must contain at least 12 characters. "
+            "Employees must use strong, unique passwords."
+        ),
+        page_number=1,
+        chunk_index=0,
+        document_id="security_policy",
+    )
+
+    mfa_chunk = TextChunk(
+        text=(
+            "Multi-factor authentication is required for "
+            "company email, cloud applications, and remote systems."
+        ),
+        page_number=1,
+        chunk_index=1,
+        document_id="security_policy",
+    )
+
+    results = [
+        RetrievalResult(chunk=mfa_chunk, score=0.5),
+        RetrievalResult(chunk=password_chunk, score=0.5),
+    ]
+
+    ranked = reranker.rerank(
+        query="What is the minimum password length?",
+        results=results,
+        top_k=2,
+    )
+
+    assert ranked[0].result.chunk.chunk_id == password_chunk.chunk_id
+
+
+def test_reranker_prefers_exact_vacation_phrase():
+    reranker = CrossEncoderReranker()
+
+    vacation_chunk = TextChunk(
+        text=(
+            "Full-time employees receive 15 days of paid vacation "
+            "per calendar year."
+        ),
+        page_number=1,
+        chunk_index=0,
+        document_id="employee_handbook",
+    )
+
+    attendance_chunk = TextChunk(
+        text=(
+            "Employees are expected to maintain attendance "
+            "and punctuality."
+        ),
+        page_number=1,
+        chunk_index=1,
+        document_id="attendance_policy",
+    )
+
+    ranked = reranker.rerank(
+        query="How many vacation days do employees receive?",
+        results=[
+            RetrievalResult(chunk=attendance_chunk, score=0.5),
+            RetrievalResult(chunk=vacation_chunk, score=0.5),
+        ],
+        top_k=2,
+    )
+
+    assert ranked[0].result.chunk.chunk_id == vacation_chunk.chunk_id
+
+
+def test_reranker_prefers_specific_mfa_chunk():
+    reranker = CrossEncoderReranker()
+
+    mfa_chunk = TextChunk(
+        text=(
+            "Multi-factor authentication (MFA) is required "
+            "for company email, cloud applications, and remote systems."
+        ),
+        page_number=1,
+        chunk_index=0,
+        document_id="security_policy",
+    )
+
+    password_chunk = TextChunk(
+        text=(
+            "Employees must use strong passwords containing "
+            "at least 12 characters."
+        ),
+        page_number=1,
+        chunk_index=1,
+        document_id="security_policy",
+    )
+
+    ranked = reranker.rerank(
+        query="Which systems require multi-factor authentication?",
+        results=[
+            RetrievalResult(chunk=password_chunk, score=0.5),
+            RetrievalResult(chunk=mfa_chunk, score=0.5),
+        ],
+        top_k=2,
+    )
+
+    assert ranked[0].result.chunk.chunk_id == mfa_chunk.chunk_id
+
+
+def test_reranker_prefers_access_request_chunk_for_who_question():
+    reranker = CrossEncoderReranker()
+
+    mfa_chunk = TextChunk(
+        text=(
+            "Multi-factor authentication is required for access "
+            "to company email, cloud applications, and remote systems. "
+            "Employees must register an approved authentication method."
+        ),
+        page_number=1,
+        chunk_index=0,
+        document_id="security_policy",
+    )
+
+    access_request_chunk = TextChunk(
+        text=(
+            "Managers must request access for new employees "
+            "through the approved IT access request process. "
+            "Access permissions must be reviewed periodically."
+        ),
+        page_number=1,
+        chunk_index=1,
+        document_id="security_policy",
+    )
+
+    ranked = reranker.rerank(
+        query="Who is responsible for requesting system access for new employees?",
+        results=[
+            RetrievalResult(chunk=mfa_chunk, score=0.5),
+            RetrievalResult(chunk=access_request_chunk, score=0.5),
+        ],
+        top_k=2,
+    )
+
+    assert ranked[0].result.chunk.chunk_id == access_request_chunk.chunk_id

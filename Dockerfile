@@ -19,11 +19,11 @@ RUN pip install --upgrade pip \
     && pip install .
 
 RUN useradd --create-home appuser \
-    && mkdir -p /home/appuser/.cache/huggingface \
-    && chown -R appuser:appuser /home/appuser
+    && mkdir -p /home/appuser/.cache/huggingface /app/data/uploads \
+    && chown -R appuser:appuser /home/appuser /app/data
 
 USER appuser
 
-EXPOSE 10000
+EXPOSE 8000
 
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-10000}"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

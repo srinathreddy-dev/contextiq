@@ -1,16 +1,24 @@
 
 import logging
+import re
 import secrets
 import time
-
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 from threading import Lock
 
-from fastapi import FastAPI, Header, HTTPException, Request
+import pymupdf
+from fastapi import (
+    FastAPI,
+    File,
+    Header,
+    HTTPException,
+    Request,
+    UploadFile,
+    status,
+)
 from fastapi.responses import Response
-
 from openai import (
     APIConnectionError,
     APIStatusError,
@@ -18,7 +26,6 @@ from openai import (
     AuthenticationError,
     RateLimitError,
 )
-
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, Field
 
@@ -33,11 +40,12 @@ from app.generation.rag_service import RAGService
 
 
 configure_logging()
-
 logger = logging.getLogger(__name__)
 
 DOCUMENTS_DIRECTORY = Path("data/sample")
+UPLOADS_DIRECTORY = Path("data/uploads")
 
+MAX_UPLOAD_SIZE_BYTES = 10 * 1024 * 1024
 
 # --------------------------------------------------
 # RATE LIMITING CONFIGURATION
@@ -48,6 +56,7 @@ RATE_LIMIT_WINDOW_SECONDS = 60
 
 _request_history = defaultdict(deque)
 _rate_limit_lock = Lock()
+_document_update_lock = Lock()
 
 
 def enforce_rate_limit(api_key: str) -> None:
@@ -81,6 +90,118 @@ def enforce_rate_limit(api_key: str) -> None:
 
 
 # --------------------------------------------------
+# FILE HANDLING
+# --------------------------------------------------
+
+def sanitize_filename(filename: str) -> str:
+    """Return a safe PDF filename."""
+
+    normalized_name = filename.replace("\\", "/").split("/")[-1]
+    original_stem = Path(normalized_name).stem
+
+    safe_stem = re.sub(
+        r"[^A-Za-z0-9._ -]",
+        "_",
+        original_stem,
+    ).strip(" ._-")
+
+    if not safe_stem:
+        safe_stem = "uploaded_document"
+
+    return f"{safe_stem}.pdf"
+
+
+def get_unique_document_path(filename: str) -> Path:
+    """Generate a filename that does not collide with existing documents."""
+
+    candidate = UPLOADS_DIRECTORY / filename
+
+    existing_names = {
+        path.stem.lower()
+        for directory in (DOCUMENTS_DIRECTORY, UPLOADS_DIRECTORY)
+        if directory.exists()
+        for path in directory.glob("*.pdf")
+        if path.is_file()
+    }
+
+    if candidate.stem.lower() not in existing_names:
+        return candidate
+
+    counter = 2
+
+    while True:
+        candidate = UPLOADS_DIRECTORY / (
+            f"{Path(filename).stem}-{counter}.pdf"
+        )
+
+        if candidate.stem.lower() not in existing_names:
+            return candidate
+
+        counter += 1
+
+
+def validate_pdf_content(content: bytes) -> int:
+    """Validate PDF structure and ensure searchable text exists."""
+
+    if not content:
+        raise ValueError("The uploaded file is empty.")
+
+    if b"%PDF-" not in content[:1024]:
+        raise ValueError("The uploaded file is not a valid PDF.")
+
+    try:
+        with pymupdf.open(
+            stream=content,
+            filetype="pdf",
+        ) as document:
+            if document.is_encrypted:
+                raise ValueError(
+                    "Password-protected PDFs are not supported."
+                )
+
+            if document.page_count == 0:
+                raise ValueError("The PDF contains no pages.")
+
+            has_searchable_text = any(
+                page.get_text("text").strip()
+                for page in document
+            )
+
+            if not has_searchable_text:
+                raise ValueError(
+                    "The PDF contains no searchable text. "
+                    "Scanned PDFs require OCR."
+                )
+
+            return document.page_count
+
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError(
+            "The uploaded PDF is corrupted or cannot be read."
+        ) from exc
+
+
+def get_document_metadata(path: Path, source: str) -> dict:
+    """Return document information for the document-list endpoint."""
+
+    try:
+        with pymupdf.open(path) as document:
+            page_count = document.page_count
+    except Exception:
+        logger.exception("Could not read document metadata: %s", path)
+        page_count = 0
+
+    return {
+        "name": path.name,
+        "source": source,
+        "pages": page_count,
+        "size_bytes": path.stat().st_size,
+    }
+
+
+# --------------------------------------------------
 # APPLICATION LIFECYCLE
 # --------------------------------------------------
 
@@ -90,6 +211,8 @@ async def lifespan(app: FastAPI):
 
     app.state.rag_service = None
     app.state.rag_startup_error = None
+
+    UPLOADS_DIRECTORY.mkdir(parents=True, exist_ok=True)
 
     if not DOCUMENTS_DIRECTORY.exists():
         app.state.rag_startup_error = (
@@ -108,12 +231,26 @@ async def lifespan(app: FastAPI):
         return
 
     try:
-        app.state.rag_service = build_rag_service(
-            documents_directory=DOCUMENTS_DIRECTORY,
-        )
+        uploaded_pdfs = list(UPLOADS_DIRECTORY.glob("*.pdf"))
+
+        if uploaded_pdfs:
+            app.state.rag_service = build_rag_service(
+                documents_directory=DOCUMENTS_DIRECTORY,
+                additional_documents_directories=[
+                    UPLOADS_DIRECTORY
+                ],
+            )
+        else:
+            app.state.rag_service = build_rag_service(
+                documents_directory=DOCUMENTS_DIRECTORY,
+            )
+
         logger.info("RAG service initialized successfully.")
 
-    except (ValueError, FileNotFoundError):
+    except Exception:
+        app.state.rag_startup_error = (
+            "Failed to initialize the RAG service."
+        )
         logger.exception("Failed to initialize RAG service.")
 
     yield
@@ -232,6 +369,15 @@ class AskResponse(BaseModel):
     evidence: list[EvidenceResponse]
 
 
+class DocumentResponse(BaseModel):
+    """Metadata for a document in the knowledge base."""
+
+    name: str
+    source: str
+    pages: int
+    size_bytes: int
+
+
 # --------------------------------------------------
 # RAG SERVICE CONFIGURATION
 # --------------------------------------------------
@@ -310,6 +456,219 @@ def metrics() -> Response:
         content=generate_latest(),
         media_type=CONTENT_TYPE_LATEST,
     )
+
+
+# --------------------------------------------------
+# DOCUMENT LIST ENDPOINT
+# --------------------------------------------------
+
+@app.get(
+    "/documents",
+    response_model=list[DocumentResponse],
+)
+def list_documents(
+    api_key: str | None = Header(
+        default=None,
+        alias="X-API-Key",
+    ),
+) -> list[DocumentResponse]:
+    """List sample and uploaded documents."""
+
+    verify_api_key(api_key)
+
+    documents = []
+
+    for path in sorted(DOCUMENTS_DIRECTORY.glob("*.pdf")):
+        if path.is_file():
+            documents.append(
+                DocumentResponse(
+                    **get_document_metadata(path, "sample")
+                )
+            )
+
+    for path in sorted(UPLOADS_DIRECTORY.glob("*.pdf")):
+        if path.is_file():
+            documents.append(
+                DocumentResponse(
+                    **get_document_metadata(path, "uploaded")
+                )
+            )
+
+    return documents
+
+
+# --------------------------------------------------
+# DOCUMENT UPLOAD ENDPOINT
+# --------------------------------------------------
+
+@app.post(
+    "/documents/upload",
+    status_code=status.HTTP_201_CREATED,
+)
+def upload_document(
+    file: UploadFile = File(...),
+    api_key: str | None = Header(
+        default=None,
+        alias="X-API-Key",
+    ),
+):
+    """Validate, save, and index an uploaded PDF."""
+
+    verify_api_key(api_key)
+
+    if not file.filename:
+        raise HTTPException(
+            status_code=400,
+            detail="A filename is required.",
+        )
+
+    if Path(file.filename.replace("\\", "/")).suffix.lower() != ".pdf":
+        raise HTTPException(
+            status_code=415,
+            detail="Only PDF files are supported.",
+        )
+
+    service = getattr(app.state, "rag_service", None)
+
+    if service is None:
+        raise HTTPException(
+            status_code=503,
+            detail="The knowledge service is not configured.",
+        )
+
+    try:
+        content = file.file.read(MAX_UPLOAD_SIZE_BYTES + 1)
+
+        if len(content) > MAX_UPLOAD_SIZE_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail="The maximum PDF upload size is 10 MB.",
+            )
+
+        page_count = validate_pdf_content(content)
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=str(exc),
+        ) from exc
+
+    finally:
+        file.file.close()
+
+    saved_path = None
+
+    with _document_update_lock:
+        try:
+            filename = sanitize_filename(file.filename)
+            saved_path = get_unique_document_path(filename)
+
+            saved_path.write_bytes(content)
+
+            # Rebuild the knowledge base without replacing the active
+            # service until indexing has completed successfully.
+            current_service = getattr(
+                app.state,
+                "rag_service",
+                None,
+            )
+
+            if current_service is None:
+                raise RuntimeError(
+                    "The knowledge service is not configured."
+                )
+
+            new_service = build_rag_service(
+                documents_directory=DOCUMENTS_DIRECTORY,
+                additional_documents_directories=[
+                    UPLOADS_DIRECTORY,
+                ],
+                answer_service=current_service.answer_service,
+                reranker=current_service.reranker,
+            )
+
+            # Atomic reference replacement: existing requests can finish
+            # using the old service while new requests use the new one.
+            app.state.rag_service = new_service
+
+            logger.info(
+                "Document uploaded and indexed successfully: %s",
+                saved_path.name,
+            )
+
+            return {
+                "message": "Document uploaded and indexed successfully.",
+                "document": {
+                    "name": saved_path.name,
+                    "source": "uploaded",
+                    "pages": page_count,
+                    "size_bytes": len(content),
+                },
+            }
+
+        except ValueError as exc:
+            if saved_path and saved_path.exists():
+                saved_path.unlink()
+
+            raise HTTPException(
+                status_code=422,
+                detail=str(exc),
+            ) from exc
+
+        except RateLimitError as exc:
+            if saved_path and saved_path.exists():
+                saved_path.unlink()
+
+            logger.exception("OpenAI rate limit during document indexing.")
+
+            raise HTTPException(
+                status_code=503,
+                detail="AI indexing is temporarily unavailable.",
+            ) from exc
+
+        except APITimeoutError as exc:
+            if saved_path and saved_path.exists():
+                saved_path.unlink()
+
+            logger.exception("OpenAI indexing request timed out.")
+
+            raise HTTPException(
+                status_code=504,
+                detail="Document indexing timed out.",
+            ) from exc
+
+        except APIConnectionError as exc:
+            if saved_path and saved_path.exists():
+                saved_path.unlink()
+
+            logger.exception("OpenAI connection failed during indexing.")
+
+            raise HTTPException(
+                status_code=503,
+                detail="The AI service is temporarily unreachable.",
+            ) from exc
+
+        except (AuthenticationError, APIStatusError) as exc:
+            if saved_path and saved_path.exists():
+                saved_path.unlink()
+
+            logger.exception("OpenAI error during document indexing.")
+
+            raise HTTPException(
+                status_code=502,
+                detail="The AI service returned an error during indexing.",
+            ) from exc
+
+        except Exception as exc:
+            if saved_path and saved_path.exists():
+                saved_path.unlink()
+
+            logger.exception("Document upload or indexing failed.")
+
+            raise HTTPException(
+                status_code=500,
+                detail="Document upload failed. Please try again.",
+            ) from exc
 
 
 # --------------------------------------------------

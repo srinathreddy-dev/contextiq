@@ -15,6 +15,7 @@ dependencies = [
     "rank-bm25==0.2.2",
     "uvicorn[standard]==0.35.0",
     "prometheus-client==0.23.1",
+    "python-multipart==0.0.32",
 ]
 [tool.setuptools.packages.find]
 include = ["app*"]

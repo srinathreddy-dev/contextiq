@@ -1,6 +1,11 @@
 
 import numpy as np
 
+from types import SimpleNamespace
+from unittest.mock import Mock
+
+import pytest
+
 from app.ingestion.chunker import TextChunk
 from app.retrieval.semantic_retriever import SemanticEmbedder
 
@@ -27,6 +32,7 @@ class MockEmbeddingsAPI:
             else [0.0, 1.0, 0.0]
             for text in texts
         ]
+
         return MockEmbeddingsResponse(vectors)
 
 
@@ -71,7 +77,11 @@ def test_embeddings_are_normalized():
 
     embedding = embedder.embed_query("health insurance")
 
-    assert np.isclose(np.linalg.norm(embedding), 1.0, atol=1e-5)
+    assert np.isclose(
+        np.linalg.norm(embedding),
+        1.0,
+        atol=1e-5,
+    )
 
 
 def test_empty_chunks_return_empty_matrix():
@@ -80,3 +90,56 @@ def test_empty_chunks_return_empty_matrix():
     embeddings = embedder.embed_chunks([])
 
     assert embeddings.shape == (0, 1536)
+
+
+def test_openai_embedding_client_uses_configured_timeout_and_retries(
+    monkeypatch,
+):
+    import app.retrieval.semantic_retriever as semantic_module
+
+    fake_settings = SimpleNamespace(
+        openai_api_key="test-key",
+        openai_timeout_seconds=60.0,
+        openai_max_retries=2,
+    )
+
+    monkeypatch.setattr(
+        semantic_module,
+        "settings",
+        fake_settings,
+    )
+
+    mock_openai = Mock()
+
+    monkeypatch.setattr(
+        semantic_module,
+        "OpenAI",
+        mock_openai,
+    )
+
+    SemanticEmbedder()
+
+    mock_openai.assert_called_once_with(
+        api_key="test-key",
+        timeout=60.0,
+        max_retries=2,
+    )
+
+
+def test_semantic_embedder_requires_api_key(monkeypatch):
+    import app.retrieval.semantic_retriever as semantic_module
+
+    fake_settings = SimpleNamespace(
+        openai_api_key=None,
+        openai_timeout_seconds=60.0,
+        openai_max_retries=2,
+    )
+
+    monkeypatch.setattr(
+        semantic_module,
+        "settings",
+        fake_settings,
+    )
+
+    with pytest.raises(ValueError, match="OPENAI_API_KEY"):
+        SemanticEmbedder()

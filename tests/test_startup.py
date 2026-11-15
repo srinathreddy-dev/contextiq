@@ -67,6 +67,10 @@ def test_startup_builds_knowledge_service_from_documents_directory(
             "app.main.DOCUMENTS_DIRECTORY",
             tmp_path,
         ),
+        patch(
+            "app.main.UPLOADS_DIRECTORY",
+            tmp_path / "uploads",
+        ),
         patch("app.main.settings", fake_settings),
         patch(
             "app.main.build_rag_service",

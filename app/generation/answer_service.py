@@ -1,3 +1,8 @@
+
+from app.core.metrics import (
+    RAG_LLM_API_DURATION_SECONDS,
+    RAG_PROMPT_BUILD_DURATION_SECONDS,
+)
 from app.generation.llm_client import LLMClient
 from app.generation.prompt_builder import PromptBuilder
 from app.reranking.cross_encoder_reranker import RerankedResult
@@ -20,14 +25,17 @@ class AnswerGenerationService:
         evidence: list[RerankedResult],
     ) -> str:
         """Build a grounded prompt and generate an answer."""
-        prompt = self.prompt_builder.build(
-            question=question,
-            evidence=evidence,
-        )
+
+        with RAG_PROMPT_BUILD_DURATION_SECONDS.time():
+            prompt = self.prompt_builder.build(
+                question=question,
+                evidence=evidence,
+            )
 
         if self.llm_client is None:
             raise ValueError(
                 "An LLMClient must be provided to generate answers."
             )
 
-        return self.llm_client.generate(prompt)
+        with RAG_LLM_API_DURATION_SECONDS.time():
+            return self.llm_client.generate(prompt)

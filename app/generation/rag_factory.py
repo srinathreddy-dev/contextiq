@@ -14,32 +14,54 @@ def build_rag_service(
     answer_service: AnswerGenerationService | None = None,
     *,
     documents_directory: str | Path | None = None,
+    additional_documents_directories: list[str | Path] | None = None,
+    reranker: CrossEncoderReranker | None = None,
 ) -> RAGService:
-    """Build a RAG service from one PDF or a directory of PDFs."""
+    """Build a RAG service from a PDF or one or more PDF directories."""
 
-    if pdf_path is not None and documents_directory is not None:
+    additional_directories = additional_documents_directories or []
+
+    if pdf_path is not None and (
+        documents_directory is not None or additional_directories
+    ):
         raise ValueError(
-            "Provide either pdf_path or documents_directory, not both."
+            "Provide either pdf_path or document directories, not both."
         )
 
-    if pdf_path is None and documents_directory is None:
+    if pdf_path is None and documents_directory is None and not additional_directories:
         raise ValueError(
-            "A PDF path or documents directory must be provided."
+            "A PDF path or at least one documents directory must be provided."
         )
 
     pipeline = DocumentIngestionPipeline()
 
-    if documents_directory is not None:
-        ingested_documents = pipeline.process_directory(
-            documents_directory
-        )
-    else:
+    if pdf_path is not None:
         source_path = Path(pdf_path)
 
         if source_path.is_dir():
             ingested_documents = pipeline.process_directory(source_path)
         else:
             ingested_documents = [pipeline.process(source_path)]
+
+    else:
+        directories = []
+
+        if documents_directory is not None:
+            directories.append(Path(documents_directory))
+
+        directories.extend(Path(path) for path in additional_directories)
+
+        # Avoid processing the same directory more than once.
+        unique_directories = list(
+            dict.fromkeys(path.resolve() for path in directories)
+        )
+
+        ingested_documents = []
+
+        for directory in unique_directories:
+            ingested_documents.extend(
+                pipeline.process_directory(directory)
+            )
 
     all_chunks = [
         chunk
@@ -52,8 +74,15 @@ def build_rag_service(
             "The PDF documents did not contain any searchable text."
         )
 
+    chunk_ids = [chunk.chunk_id for chunk in all_chunks]
+
+    if len(chunk_ids) != len(set(chunk_ids)):
+        raise ValueError(
+            "Duplicate chunk IDs found across the document directories."
+        )
+
     hybrid_retriever = HybridRetriever(all_chunks)
-    reranker = CrossEncoderReranker()
+    active_reranker = reranker or CrossEncoderReranker()
 
     if answer_service is None:
         answer_service = AnswerGenerationService(
@@ -63,7 +92,7 @@ def build_rag_service(
     return RAGService(
         chunks=all_chunks,
         hybrid_retriever=hybrid_retriever,
-        reranker=reranker,
+        reranker=active_reranker,
         answer_service=answer_service,
     )
 

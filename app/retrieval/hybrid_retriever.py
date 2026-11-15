@@ -1,3 +1,4 @@
+
 from dataclasses import dataclass
 
 from app.ingestion.chunker import TextChunk
@@ -16,7 +17,7 @@ class HybridRetrievalResult:
 
 
 class HybridRetriever:
-    """Combine BM25 and semantic retrieval using weighted rank fusion."""
+    """Combine BM25 and semantic retrieval using weighted scores."""
 
     def __init__(
         self,
@@ -27,9 +28,18 @@ class HybridRetriever:
         if not chunks:
             raise ValueError("At least one chunk is required")
 
+        chunk_ids = [chunk.chunk_id for chunk in chunks]
+
+        if len(chunk_ids) != len(set(chunk_ids)):
+            raise ValueError("Chunk IDs must be unique")
+
         self.chunks = chunks
-        self.bm25_retriever = bm25_retriever or BM25Retriever(chunks)
-        self.semantic_searcher = semantic_searcher or SemanticSearcher(chunks)
+        self.bm25_retriever = (
+            bm25_retriever or BM25Retriever(chunks)
+        )
+        self.semantic_searcher = (
+            semantic_searcher or SemanticSearcher(chunks)
+        )
 
     def search(
         self,
@@ -39,6 +49,7 @@ class HybridRetriever:
         semantic_weight: float = 0.5,
     ) -> list[HybridRetrievalResult]:
         """Return chunks ranked using both retrieval signals."""
+
         if not query.strip():
             return []
 
@@ -49,7 +60,9 @@ class HybridRetriever:
             raise ValueError("weights cannot be negative")
 
         if bm25_weight + semantic_weight == 0:
-            raise ValueError("at least one retrieval weight must be greater than zero")
+            raise ValueError(
+                "at least one retrieval weight must be greater than zero"
+            )
 
         bm25_results = self.bm25_retriever.search(
             query,
@@ -78,13 +91,13 @@ class HybridRetriever:
             semantic_score = semantic_scores.get(chunk.chunk_id, 0.0)
 
             combined_score = (
-                bm25_weight * self._normalize_bm25_score(
+                bm25_weight
+                * self._normalize_bm25_score(
                     bm25_score,
                     bm25_results,
                 )
-                + semantic_weight * self._normalize_semantic_score(
-                    semantic_score,
-                )
+                + semantic_weight
+                * self._normalize_semantic_score(semantic_score)
             )
 
             combined_results.append(
@@ -109,6 +122,7 @@ class HybridRetriever:
         results,
     ) -> float:
         """Normalize BM25 scores to a 0-1 range."""
+
         if not results:
             return 0.0
 
@@ -122,4 +136,5 @@ class HybridRetriever:
     @staticmethod
     def _normalize_semantic_score(score: float) -> float:
         """Convert cosine similarity from -1..1 into 0..1."""
+
         return (score + 1.0) / 2.0

@@ -113,10 +113,28 @@ def test_rrf_handles_duplicate_chunk_indexes_across_pages():
     returned_ids = {
         result.chunk.chunk_id
         for result in results
-   }
+    }
 
     assert len(results) == 2
+
     assert returned_ids == {
         "employee_handbook-page-1-chunk-0",
         "employee_handbook-page-2-chunk-0",
     }
+
+
+def test_rrf_rejects_duplicate_chunk_ids():
+    chunk = TextChunk(
+        text="Health insurance enrollment information.",
+        page_number=1,
+        chunk_index=0,
+        document_id="employee_handbook",
+    )
+
+    chunks = [chunk, chunk]
+
+    with pytest.raises(
+        ValueError,
+        match="Chunk IDs must be unique",
+    ):
+        RRFHybridRetriever(chunks)

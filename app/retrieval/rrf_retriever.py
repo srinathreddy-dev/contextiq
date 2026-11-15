@@ -1,3 +1,4 @@
+
 from dataclasses import dataclass
 
 from app.ingestion.chunker import TextChunk
@@ -30,6 +31,12 @@ class RRFHybridRetriever:
         if not chunks:
             raise ValueError("At least one chunk is required")
 
+        # Validate that every chunk has a unique ID.
+        chunk_ids = [chunk.chunk_id for chunk in chunks]
+
+        if len(chunk_ids) != len(set(chunk_ids)):
+            raise ValueError("Chunk IDs must be unique")
+
         if rrf_k <= 0:
             raise ValueError("rrf_k must be greater than zero")
 
@@ -37,7 +44,9 @@ class RRFHybridRetriever:
             raise ValueError("Weights cannot be negative")
 
         if bm25_weight + semantic_weight == 0:
-            raise ValueError("At least one weight must be greater than zero")
+            raise ValueError(
+                "At least one weight must be greater than zero"
+            )
 
         self.chunks = chunks
         self.rrf_k = rrf_k
@@ -47,6 +56,7 @@ class RRFHybridRetriever:
         self.bm25_retriever = (
             bm25_retriever or BM25Retriever(chunks)
         )
+
         self.semantic_searcher = (
             semantic_searcher or SemanticSearcher(chunks)
         )

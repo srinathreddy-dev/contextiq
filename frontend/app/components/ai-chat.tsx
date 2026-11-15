@@ -1,6 +1,8 @@
+
 "use client";
 
 import { FormEvent, useState } from "react";
+
 import {
   Bot,
   FileText,
@@ -97,25 +99,34 @@ export default function AIChat() {
 
   return (
     <section className="flex min-h-[520px] flex-col">
-      <div className="flex items-center gap-3 border-b border-slate-100 p-5">
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-violet-600 text-white">
+      {/* Assistant header */}
+      <div className="flex items-center gap-3 border-b border-slate-100 p-4 sm:p-5">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-violet-600 text-white">
           <Bot size={21} />
         </div>
 
-        <div>
-          <h2 className="text-sm font-bold">AI Assistant</h2>
-          <p className="text-[11px] text-slate-400">
-            Powered by your enterprise knowledge base
+        <div className="min-w-0">
+          <h2 className="text-sm font-bold text-slate-800">
+            AI Assistant
+          </h2>
+
+          <p className="whitespace-nowrap text-xs text-slate-500">
+            Answers from your documents
           </p>
         </div>
 
-        <span className="ml-auto flex items-center gap-1.5 text-[10px] font-medium text-emerald-600">
+        <span className="ml-auto flex shrink-0 items-center gap-1.5 text-xs font-medium text-emerald-700">
           <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
           Connected
         </span>
       </div>
 
-      <div className="flex-1 space-y-5 overflow-y-auto p-5">
+      {/* Conversation */}
+      <div
+        className="flex-1 space-y-5 overflow-y-auto p-4 sm:p-5"
+        aria-live="polite"
+        aria-label="Chat messages"
+      >
         {messages.map((message, index) => (
           <div
             key={index}
@@ -135,7 +146,7 @@ export default function AIChat() {
               }`}
             >
               <div
-                className={`rounded-xl p-3 text-xs leading-6 ${
+                className={`rounded-xl px-3 py-2.5 text-xs leading-6 ${
                   message.role === "user"
                     ? "bg-blue-600 text-white"
                     : "bg-slate-100 text-slate-700"
@@ -147,13 +158,18 @@ export default function AIChat() {
               {message.evidence && message.evidence.length > 0 && (
                 <div className="space-y-2">
                   <details className="group">
-                    <summary className="flex cursor-pointer list-none items-center gap-2 rounded-lg bg-blue-50 px-3 py-3 text-[11px] font-semibold text-blue-700 hover:bg-blue-100">
+                    <summary className="flex cursor-pointer list-none items-center gap-2 rounded-lg bg-blue-50 px-3 py-2.5 text-xs font-semibold text-blue-700 transition hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500">
                       <Sparkles size={14} />
-                      Supporting evidence ({Math.min(message.evidence.length, 3)})
-                      <span className="ml-auto text-[10px] font-normal text-blue-500 group-open:hidden">
+
+                      Supporting evidence (
+                        {Math.min(message.evidence.length, 3)}
+                      )
+
+                      <span className="ml-auto text-xs font-normal text-blue-600 group-open:hidden">
                         Show sources +
                       </span>
-                      <span className="ml-auto hidden text-[10px] font-normal text-blue-500 group-open:inline">
+
+                      <span className="ml-auto hidden text-xs font-normal text-blue-600 group-open:inline">
                         Hide sources −
                       </span>
                     </summary>
@@ -164,10 +180,14 @@ export default function AIChat() {
                           key={`${item.chunk_id}-${evidenceIndex}`}
                           className="rounded-lg border border-blue-100 bg-blue-50/60 p-3"
                         >
-                          <div className="flex items-center gap-2 text-[10px] font-semibold text-blue-800">
+                          <div className="flex items-center gap-2 text-xs font-semibold text-blue-800">
                             <FileText size={13} />
-                            {item.document_name}
-                            <span className="ml-auto">
+
+                            <span className="min-w-0 truncate">
+                              {item.document_name}
+                            </span>
+
+                            <span className="ml-auto shrink-0">
                               Page {item.page_number}
                             </span>
                           </div>
@@ -176,7 +196,7 @@ export default function AIChat() {
                             {item.text}
                           </p>
 
-                          <p className="mt-2 text-[10px] text-slate-400">
+                          <p className="mt-2 text-xs text-slate-500">
                             Relevance score:{" "}
                             {Number(item.relevance_score).toFixed(3)}
                           </p>
@@ -197,7 +217,7 @@ export default function AIChat() {
         ))}
 
         {loading && (
-          <div className="flex items-center gap-3 text-xs text-slate-500">
+          <div className="flex items-center gap-3 text-xs text-slate-600">
             <Loader2 size={17} className="animate-spin text-blue-600" />
             Searching documents and generating your answer...
           </div>
@@ -213,11 +233,12 @@ export default function AIChat() {
         )}
       </div>
 
+      {/* Question input */}
       <form
         onSubmit={handleSubmit}
         className="border-t border-slate-100 p-4"
       >
-        <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white p-2 focus-within:border-blue-400 focus-within:ring-2 focus-within:ring-blue-50">
+        <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white p-2 transition focus-within:border-blue-400 focus-within:ring-2 focus-within:ring-blue-50">
           <input
             value={question}
             onChange={(event) => setQuestion(event.target.value)}
@@ -232,7 +253,7 @@ export default function AIChat() {
             type="submit"
             disabled={loading || !question.trim()}
             aria-label="Send question"
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-600 text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-600 text-white transition hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {loading ? (
               <Loader2 size={16} className="animate-spin" />
@@ -242,7 +263,7 @@ export default function AIChat() {
           </button>
         </div>
 
-        <p className="mt-2 text-center text-[10px] text-slate-400">
+        <p className="mt-2 text-center text-xs text-slate-500">
           Answers are generated from retrieved knowledge base evidence.
         </p>
       </form>

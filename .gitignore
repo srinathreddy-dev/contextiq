@@ -19,6 +19,8 @@ htmlcov/
 # Local data
 data/raw/*
 data/processed/*
+data/uploads/*
+!data/uploads/.gitkeep
 
 # macOS
 .DS_Store

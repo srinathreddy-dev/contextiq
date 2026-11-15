@@ -1,10 +1,14 @@
-from unittest.mock import Mock
+
 from types import SimpleNamespace
+from unittest.mock import Mock
 
+import fitz
+import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
-
 from openai import (
     APIConnectionError,
+    APIStatusError,
     APITimeoutError,
     AuthenticationError,
     RateLimitError,
@@ -27,7 +31,6 @@ client = TestClient(
 
 def create_mock_openai_response(status_code: int):
     """Create a mock HTTP response for OpenAI API exceptions."""
-
     response = Mock()
     response.status_code = status_code
     response.headers = {}
@@ -40,11 +43,34 @@ def create_mock_openai_response(status_code: int):
     return response
 
 
+def create_upload_pdf_bytes() -> bytes:
+    """Create a valid one-page PDF for upload tests."""
+    document = fitz.open()
+    page = document.new_page()
+    page.insert_text(
+        (72, 72),
+        "Employee handbook upload test document.",
+    )
+    content = document.tobytes()
+    document.close()
+    return content
+
+
+# --------------------------------------------------
+# HEALTH CHECK
+# --------------------------------------------------
+
+
 def test_health_endpoint():
     response = client.get("/health")
 
     assert response.status_code == 200
     assert response.json() == {"status": "healthy"}
+
+
+# --------------------------------------------------
+# API AUTHENTICATION
+# --------------------------------------------------
 
 
 def test_ask_endpoint_rejects_missing_api_key():
@@ -57,6 +83,7 @@ def test_ask_endpoint_rejects_missing_api_key():
 
     assert response.status_code == 401
     assert response.json()["detail"] == "Invalid or missing API key."
+
 
 def test_ask_endpoint_rejects_invalid_api_key():
     response = client.post(
@@ -86,6 +113,11 @@ def test_ask_endpoint_returns_503_when_api_key_not_configured(
     assert response.json()["detail"] == (
         "API authentication is not configured."
     )
+
+
+# --------------------------------------------------
+# QUESTION ANSWERING
+# --------------------------------------------------
 
 
 def test_ask_endpoint_returns_answer_and_evidence():
@@ -289,6 +321,11 @@ def test_ask_endpoint_searches_multiple_pdfs():
         set_rag_service(None)
 
 
+# --------------------------------------------------
+# READINESS CHECK
+# --------------------------------------------------
+
+
 def test_ready_endpoint_returns_ready_when_service_is_configured():
     mock_service = Mock()
 
@@ -314,6 +351,11 @@ def test_ready_endpoint_returns_503_when_service_is_not_configured():
     assert response.json() == {
         "detail": "The knowledge service is not configured."
     }
+
+
+# --------------------------------------------------
+# OPENAI ERROR HANDLING
+# --------------------------------------------------
 
 
 def test_ask_endpoint_handles_openai_rate_limit():
@@ -430,12 +472,45 @@ def test_ask_endpoint_handles_openai_authentication_error():
     finally:
         set_rag_service(None)
 
+def test_ask_endpoint_handles_openai_api_status_error():
+    mock_service = Mock()
+
+    error = APIStatusError(
+        message="Internal server error",
+        response=create_mock_openai_response(500),
+        body={"error": {"message": "Internal server error"}},
+    )
+
+    mock_service.ask.side_effect = error
+
+    set_rag_service(mock_service)
+
+    try:
+        response = client.post(
+            "/ask",
+            json={
+                "question": "How many vacation days do employees receive?"
+            },
+        )
+
+        assert response.status_code == 502
+
+        assert response.json()["detail"] == (
+            "The AI service returned an error. "
+            "Please try again later."
+        )
+
+    finally:
+        set_rag_service(None)
+
+
+# --------------------------------------------------
+# RATE LIMITING
+# --------------------------------------------------
+
 
 def test_rate_limit_allows_first_10_requests():
-    from app.main import (
-        _request_history,
-        enforce_rate_limit,
-    )
+    from app.main import _request_history, enforce_rate_limit
 
     api_key = "rate-limit-test-key"
     _request_history.pop(api_key, None)
@@ -445,13 +520,7 @@ def test_rate_limit_allows_first_10_requests():
 
 
 def test_rate_limit_rejects_11th_request():
-    import pytest
-    from fastapi import HTTPException
-
-    from app.main import (
-        _request_history,
-        enforce_rate_limit,
-    )
+    from app.main import _request_history, enforce_rate_limit
 
     api_key = "rate-limit-reject-test-key"
     _request_history.pop(api_key, None)
@@ -467,10 +536,7 @@ def test_rate_limit_rejects_11th_request():
 
 
 def test_rate_limit_tracks_different_api_keys_separately():
-    from app.main import (
-        _request_history,
-        enforce_rate_limit,
-    )
+    from app.main import _request_history, enforce_rate_limit
 
     key_one = "rate-limit-user-one"
     key_two = "rate-limit-user-two"
@@ -483,3 +549,204 @@ def test_rate_limit_tracks_different_api_keys_separately():
 
     # A different API key should have its own allowance.
     enforce_rate_limit(key_two)
+
+
+# --------------------------------------------------
+# DOCUMENT UPLOAD RELIABILITY
+# --------------------------------------------------
+
+
+def test_upload_endpoint_accepts_valid_pdf(tmp_path, monkeypatch):
+    uploads_dir = tmp_path / "uploads"
+    uploads_dir.mkdir()
+
+    monkeypatch.setattr("app.main.UPLOADS_DIRECTORY", uploads_dir)
+    monkeypatch.setattr(
+        "app.main.DOCUMENTS_DIRECTORY",
+        tmp_path / "sample",
+    )
+
+    current_service = Mock()
+    new_service = Mock()
+
+    set_rag_service(current_service)
+
+    monkeypatch.setattr(
+        "app.main.build_rag_service",
+        Mock(return_value=new_service),
+    )
+
+    try:
+        response = client.post(
+            "/documents/upload",
+            files={
+                "file": (
+                    "employee_test.pdf",
+                    create_upload_pdf_bytes(),
+                    "application/pdf",
+                )
+            },
+        )
+
+        assert response.status_code == 201
+
+        data = response.json()
+
+        assert data["document"]["name"] == "employee_test.pdf"
+        assert data["document"]["source"] == "uploaded"
+        assert data["document"]["pages"] == 1
+        assert data["document"]["size_bytes"] > 0
+
+        assert (uploads_dir / "employee_test.pdf").exists()
+        assert app.state.rag_service is new_service
+
+    finally:
+        set_rag_service(None)
+
+
+def test_upload_endpoint_rejects_non_pdf_file():
+    response = client.post(
+        "/documents/upload",
+        files={
+            "file": (
+                "notes.txt",
+                b"This is not a PDF.",
+                "text/plain",
+            )
+        },
+    )
+
+    assert response.status_code == 415
+
+
+def test_upload_endpoint_rejects_oversized_file(
+    tmp_path,
+    monkeypatch,
+):
+    uploads_dir = tmp_path / "uploads"
+    uploads_dir.mkdir()
+
+    monkeypatch.setattr("app.main.UPLOADS_DIRECTORY", uploads_dir)
+    monkeypatch.setattr("app.main.MAX_UPLOAD_SIZE_BYTES", 10)
+
+    set_rag_service(Mock())
+
+    try:
+        response = client.post(
+            "/documents/upload",
+            files={
+                "file": (
+                    "large.pdf",
+                    b"x" * 11,
+                    "application/pdf",
+                )
+            },
+        )
+
+        assert response.status_code == 413
+        assert not list(uploads_dir.iterdir())
+
+    finally:
+        set_rag_service(None)
+
+
+def test_upload_endpoint_rejects_invalid_pdf(
+    tmp_path,
+    monkeypatch,
+):
+    uploads_dir = tmp_path / "uploads"
+    uploads_dir.mkdir()
+
+    monkeypatch.setattr("app.main.UPLOADS_DIRECTORY", uploads_dir)
+
+    set_rag_service(Mock())
+
+    try:
+        response = client.post(
+            "/documents/upload",
+            files={
+                "file": (
+                    "invalid.pdf",
+                    b"not a valid PDF document",
+                    "application/pdf",
+                )
+            },
+        )
+
+        assert response.status_code == 422
+        assert not list(uploads_dir.iterdir())
+
+    finally:
+        set_rag_service(None)
+
+
+def test_upload_endpoint_removes_file_when_indexing_fails(
+    tmp_path,
+    monkeypatch,
+):
+    uploads_dir = tmp_path / "uploads"
+    uploads_dir.mkdir()
+
+    monkeypatch.setattr("app.main.UPLOADS_DIRECTORY", uploads_dir)
+
+    current_service = Mock()
+    set_rag_service(current_service)
+
+    monkeypatch.setattr(
+        "app.main.build_rag_service",
+        Mock(side_effect=RuntimeError("Indexing failed")),
+    )
+
+    try:
+        response = client.post(
+            "/documents/upload",
+            files={
+                "file": (
+                    "failed_upload.pdf",
+                    create_upload_pdf_bytes(),
+                    "application/pdf",
+                )
+            },
+        )
+
+        assert response.status_code == 500
+        assert not (uploads_dir / "failed_upload.pdf").exists()
+
+    finally:
+        set_rag_service(None)
+
+
+def test_upload_endpoint_preserves_existing_service_when_indexing_fails(
+    tmp_path,
+    monkeypatch,
+):
+    uploads_dir = tmp_path / "uploads"
+    uploads_dir.mkdir()
+
+    monkeypatch.setattr("app.main.UPLOADS_DIRECTORY", uploads_dir)
+
+    current_service = Mock()
+    set_rag_service(current_service)
+
+    monkeypatch.setattr(
+        "app.main.build_rag_service",
+        Mock(side_effect=RuntimeError("Indexing failed")),
+    )
+
+    try:
+        response = client.post(
+            "/documents/upload",
+            files={
+                "file": (
+                    "failed_upload.pdf",
+                    create_upload_pdf_bytes(),
+                    "application/pdf",
+                )
+            },
+        )
+
+        assert response.status_code == 500
+        assert app.state.rag_service is current_service
+
+    finally:
+        set_rag_service(None)

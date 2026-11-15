@@ -1,3 +1,4 @@
+
 from dataclasses import dataclass
 import os
 
@@ -23,6 +24,14 @@ class Settings:
     openai_model: str = os.getenv(
         "OPENAI_MODEL",
         "gpt-4.1-mini",
+    )
+
+    openai_timeout_seconds: float = float(
+        os.getenv("OPENAI_TIMEOUT_SECONDS", "60")
+    )
+
+    openai_max_retries: int = int(
+        os.getenv("OPENAI_MAX_RETRIES", "2")
     )
 
 

@@ -1,6 +1,11 @@
-
 from dataclasses import dataclass
 
+from app.core.metrics import (
+    RAG_GENERATION_DURATION_SECONDS,
+    RAG_REQUEST_DURATION_SECONDS,
+    RAG_RERANKING_DURATION_SECONDS,
+    RAG_RETRIEVAL_DURATION_SECONDS,
+)
 from app.generation.answer_service import AnswerGenerationService
 from app.ingestion.chunker import TextChunk
 from app.reranking.cross_encoder_reranker import (
@@ -34,8 +39,10 @@ class RAGService:
     ) -> None:
         if not chunks:
             raise ValueError("At least one chunk is required")
+
         if retrieval_top_k <= 0:
             raise ValueError("retrieval_top_k must be greater than zero")
+
         if evidence_top_k <= 0:
             raise ValueError("evidence_top_k must be greater than zero")
 
@@ -48,42 +55,46 @@ class RAGService:
 
     def ask(self, question: str) -> RAGResponse:
         """Retrieve evidence, rerank it, and generate a grounded answer."""
+
         if not question.strip():
             raise ValueError("Question cannot be empty")
 
-        hybrid_results = self.hybrid_retriever.search(
-            query=question,
-            top_k=self.retrieval_top_k,
-        )
+        with RAG_REQUEST_DURATION_SECONDS.time():
+            with RAG_RETRIEVAL_DURATION_SECONDS.time():
+                hybrid_results = self.hybrid_retriever.search(
+                    query=question,
+                    top_k=self.retrieval_top_k,
+                )
 
-        retrieval_results = [
-            RetrievalResult(
-                chunk=result.chunk,
-                score=result.score,
+            retrieval_results = [
+                RetrievalResult(
+                    chunk=result.chunk,
+                    score=result.score,
+                )
+                for result in hybrid_results
+            ]
+
+            if not retrieval_results:
+                raise ValueError("No relevant evidence was retrieved")
+
+            with RAG_RERANKING_DURATION_SECONDS.time():
+                reranked_evidence = self.reranker.rerank(
+                    query=question,
+                    results=retrieval_results,
+                    top_k=self.evidence_top_k,
+                )
+
+            if not reranked_evidence:
+                raise ValueError("No evidence remained after reranking")
+
+            with RAG_GENERATION_DURATION_SECONDS.time():
+                answer = self.answer_service.generate_answer(
+                    question=question,
+                    evidence=reranked_evidence,
+                )
+
+            return RAGResponse(
+                question=question,
+                answer=answer,
+                evidence=reranked_evidence,
             )
-            for result in hybrid_results
-        ]
-
-        if not retrieval_results:
-            raise ValueError("No relevant evidence was retrieved")
-
-        reranked_evidence = self.reranker.rerank(
-            query=question,
-            results=retrieval_results,
-            top_k=self.evidence_top_k,
-        )
-
-        if not reranked_evidence:
-            raise ValueError("No evidence remained after reranking")
-
-        answer = self.answer_service.generate_answer(
-            question=question,
-            evidence=reranked_evidence,
-        )
-
-        return RAGResponse(
-            question=question,
-            answer=answer,
-            evidence=reranked_evidence,
-        )
-

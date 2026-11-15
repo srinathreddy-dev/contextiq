@@ -1,5 +1,6 @@
 
 import re
+
 from dataclasses import dataclass
 
 from app.retrieval.bm25_retriever import RetrievalResult
@@ -14,8 +15,9 @@ STOPWORDS = {
 }
 
 
-# Explicit terminology groups. These are curated lexical
-# relationships, not learned semantic representations.
+# Focused terminology groups.
+# These are curated lexical relationships, not learned embeddings.
+
 CONCEPTS = {
     "attendance": {
         "attendance",
@@ -29,6 +31,7 @@ CONCEPTS = {
         "punctuality",
         "workday",
     },
+
     "expectation": {
         "expectation",
         "expectations",
@@ -40,12 +43,14 @@ CONCEPTS = {
         "responsibility",
         "responsibilities",
     },
+
     "vacation": {
         "vacation",
         "pto",
         "holiday",
         "timeoff",
     },
+
     "insurance": {
         "insurance",
         "coverage",
@@ -54,6 +59,7 @@ CONCEPTS = {
         "benefit",
         "benefits",
     },
+
     "retirement": {
         "retirement",
         "savings",
@@ -61,20 +67,90 @@ CONCEPTS = {
         "contribution",
         "contributions",
     },
-    "security": {
-        "security",
+
+    # Security concepts are deliberately separated.
+
+    "password_policy": {
         "password",
         "passwords",
-        "authentication",
-        "access",
-        "protection",
-        "mfa",
+        "credential",
+        "credentials",
+        "passcode",
+        "passcodes",
     },
+
+    "mfa_authentication": {
+        "mfa",
+        "authentication",
+        "authenticator",
+        "authenticators",
+        "multifactor",
+        "factor",
+        "factors",
+        "verification",
+        "verify",
+        "verified",
+    },
+
+    "access_control": {
+        "access",
+        "permission",
+        "permissions",
+        "authorization",
+        "authorized",
+        "authorize",
+        "role",
+        "roles",
+        "request",
+        "requests",
+        "manager",
+        "managers",
+        "provision",
+        "provisioning",
+    },
+
+    "device_protection": {
+        "device",
+        "devices",
+        "computer",
+        "computers",
+        "laptop",
+        "laptops",
+        "lock",
+        "locking",
+        "software",
+        "updates",
+        "update",
+        "protection",
+        "protect",
+        "protecting",
+        "data",
+        "encryption",
+    },
+
+    "incident_reporting": {
+        "incident",
+        "incidents",
+        "report",
+        "reports",
+        "reporting",
+        "reported",
+        "phishing",
+        "lost",
+        "unauthorized",
+        "exposure",
+        "breach",
+        "breaches",
+        "notify",
+        "notification",
+    },
+
     "dental_vision": {
         "dental",
         "vision",
         "optical",
     },
+
     "sick_leave": {
         "sick",
         "illness",
@@ -97,13 +173,14 @@ class RerankedResult:
 class CrossEncoderReranker:
     """
     Rerank retrieved chunks using direct lexical matching,
-    curated concept coverage, and the original retrieval score.
+    focused concept coverage, and the original retrieval score.
 
     This is an explainable heuristic, not a trained cross-encoder.
     """
 
     def _tokenize(self, text: str) -> set[str]:
         """Extract lowercase tokens and remove possessive endings."""
+
         normalized_text = re.sub(
             r"\b([a-z]+)'s\b",
             r"\1",
@@ -118,11 +195,25 @@ class CrossEncoderReranker:
             if token not in STOPWORDS and len(token) > 1
         }
 
+    def _normalize_match_terms(self, terms: set[str]) -> set[str]:
+        """
+        Normalize selected word variants for matching
+        without changing the original tokenizer output.
+        """
+
+        normalized = set(terms)
+
+        if "passwords" in normalized:
+            normalized.add("password")
+
+        return normalized
+
     def _query_concepts(
         self,
         query_terms: set[str],
     ) -> dict[str, set[str]]:
-        """Identify concepts explicitly represented in the query."""
+        """Identify focused concepts represented in the query."""
+
         return {
             concept: terms
             for concept, terms in CONCEPTS.items()
@@ -135,7 +226,8 @@ class CrossEncoderReranker:
         results: list[RetrievalResult],
         top_k: int = 5,
     ) -> list[RerankedResult]:
-        """Rank candidates using lexical and concept relevance."""
+        """Rank candidates using lexical and focused concept relevance."""
+
         if not query.strip():
             return []
 
@@ -149,20 +241,35 @@ class CrossEncoderReranker:
 
         if not query_terms:
             return [
-                RerankedResult(result=result, score=float(result.score))
+                RerankedResult(
+                    result=result,
+                    score=float(result.score),
+                )
                 for result in results[:top_k]
             ]
 
         query_concepts = self._query_concepts(query_terms)
+
+        normalized_query_terms = self._normalize_match_terms(
+            query_terms
+        )
 
         reranked_results = []
 
         for result in results:
             document_terms = self._tokenize(result.chunk.text)
 
-            direct_overlap = len(query_terms & document_terms)
+            normalized_document_terms = self._normalize_match_terms(
+                document_terms
+            )
 
-            direct_score = direct_overlap / len(query_terms)
+            direct_overlap = len(
+                normalized_query_terms & normalized_document_terms
+            )
+
+            direct_score = (
+                direct_overlap / len(normalized_query_terms)
+            )
 
             if query_concepts:
                 matched_concepts = sum(

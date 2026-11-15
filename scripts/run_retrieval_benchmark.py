@@ -10,11 +10,11 @@ from app.ingestion.pipeline import DocumentIngestionPipeline
 DATA_DIRECTORY = Path("data/sample")
 
 TOP_K = 5
-
 CANDIDATE_K = 10
 
 
 def main() -> None:
+
     print("=" * 100)
     print("ENTERPRISE AI KNOWLEDGE PLATFORM")
     print("OFFLINE RETRIEVAL BENCHMARK")
@@ -62,6 +62,18 @@ def main() -> None:
         embedder=OfflineEmbedder(),
     )
 
+    # -----------------------------------------------------
+    # Candidate recall before reranking
+    # -----------------------------------------------------
+
+    candidate_recall = evaluator.evaluate_candidate_recall(
+        candidate_k=CANDIDATE_K,
+    )
+
+    # -----------------------------------------------------
+    # Retrieval benchmark strategies
+    # -----------------------------------------------------
+
     benchmark_results = [
         (
             "BM25",
@@ -92,8 +104,28 @@ def main() -> None:
         ),
     ]
 
+    # -----------------------------------------------------
+    # Candidate recall report
+    # -----------------------------------------------------
+
     print("\n" + "=" * 100)
-    print("RETRIEVAL QUALITY RESULTS")
+    print("CANDIDATE RETRIEVAL QUALITY")
+    print("=" * 100)
+
+    print(f"Candidate depth:       {CANDIDATE_K}")
+    print(f"Candidate Recall@{CANDIDATE_K}:  {candidate_recall:.3f}")
+
+    print(
+        "\nThis measures the proportion of relevant chunks "
+        "found before reranking."
+    )
+
+    # -----------------------------------------------------
+    # Final retrieval quality report
+    # -----------------------------------------------------
+
+    print("\n" + "=" * 100)
+    print("FINAL RETRIEVAL QUALITY RESULTS")
     print("=" * 100)
 
     print(
@@ -110,6 +142,7 @@ def main() -> None:
     print("-" * 112)
 
     for name, metrics in benchmark_results:
+
         print(
             f"{name:<30}"
             f"{metrics.recall_at_1:>10.3f}"
@@ -123,9 +156,13 @@ def main() -> None:
 
     print("-" * 112)
 
+    # -----------------------------------------------------
+    # Benchmark limitations
+    # -----------------------------------------------------
+
     print(
-        "\nIMPORTANT: These are offline diagnostic results using "
-        "feature hashing."
+        "\nIMPORTANT: These are offline diagnostic results "
+        "using feature hashing."
     )
 
     print(
@@ -134,6 +171,11 @@ def main() -> None:
 
     print(
         "The reranker is a lexical heuristic, not a trained cross-encoder."
+    )
+
+    print(
+        "Candidate Recall measures initial hybrid retrieval, "
+        "before reranking."
     )
 
 

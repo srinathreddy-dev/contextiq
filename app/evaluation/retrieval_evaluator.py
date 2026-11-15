@@ -26,12 +26,9 @@ class RetrievalEvaluation:
     recall_at_1: float
     recall_at_3: float
     recall_at_5: float
-
     precision_at_1: float
     precision_at_3: float
     precision_at_5: float
-
-
     mean_reciprocal_rank: float
 
 
@@ -56,6 +53,7 @@ class RetrievalEvaluator:
         evaluation_queries: list[EvaluationQuery] | None = None,
         embedder=None,
     ) -> None:
+
         if not chunks:
             raise ValueError("At least one chunk is required")
 
@@ -88,56 +86,146 @@ class RetrievalEvaluator:
 
         self.cross_encoder_reranker = CrossEncoderReranker()
 
+    # ---------------------------------------------------------
+    # Evaluation depth
+    # ---------------------------------------------------------
+
+    def _evaluation_depth(self, k: int) -> int:
+        """Return enough results to calculate metrics at 1, 3 and 5."""
+
+        if k <= 0:
+            raise ValueError("k must be greater than zero")
+
+        return min(
+            len(self.chunks),
+            max(k, 5),
+        )
+
+    # ---------------------------------------------------------
+    # BM25 evaluation
+    # ---------------------------------------------------------
+
     def evaluate_bm25(
         self,
         k: int = 5,
     ) -> RetrievalEvaluation:
+
+        evaluation_k = self._evaluation_depth(k)
+
         retrieved_results = [
             [
                 result.chunk.chunk_id
                 for result in self.bm25_retriever.search(
                     query.query,
-                    k,
+                    evaluation_k,
                 )
             ]
             for query in self.evaluation_queries
         ]
 
         return self._calculate_metrics(retrieved_results)
+
+    # ---------------------------------------------------------
+    # Semantic evaluation
+    # ---------------------------------------------------------
 
     def evaluate_semantic(
         self,
         k: int = 5,
     ) -> RetrievalEvaluation:
+
+        evaluation_k = self._evaluation_depth(k)
+
         retrieved_results = [
             [
                 result.chunk.chunk_id
                 for result in self.semantic_searcher.search(
                     query.query,
-                    k,
+                    evaluation_k,
                 )
             ]
             for query in self.evaluation_queries
         ]
 
         return self._calculate_metrics(retrieved_results)
+
+    # ---------------------------------------------------------
+    # Hybrid evaluation
+    # ---------------------------------------------------------
 
     def evaluate_hybrid(
         self,
         k: int = 5,
     ) -> RetrievalEvaluation:
+
+        evaluation_k = self._evaluation_depth(k)
+
         retrieved_results = [
             [
                 result.chunk.chunk_id
                 for result in self.hybrid_retriever.search(
                     query.query,
-                    k,
+                    evaluation_k,
                 )
             ]
             for query in self.evaluation_queries
         ]
 
         return self._calculate_metrics(retrieved_results)
+
+    # ---------------------------------------------------------
+    # Candidate recall evaluation
+    # ---------------------------------------------------------
+
+    def evaluate_candidate_recall(
+        self,
+        candidate_k: int = 10,
+    ) -> float:
+        """
+        Calculate macro-average recall of the initial hybrid
+        candidate pool before reranking.
+        """
+
+        if candidate_k <= 0:
+            raise ValueError(
+                "candidate_k must be greater than zero"
+            )
+
+        if not self.evaluation_queries:
+            return 0.0
+
+        retrieval_k = min(
+            candidate_k,
+            len(self.chunks),
+        )
+
+        recall_scores = []
+
+        for query in self.evaluation_queries:
+
+            candidates = self.hybrid_retriever.search(
+                query=query.query,
+                top_k=retrieval_k,
+            )
+
+            candidate_chunk_ids = [
+                result.chunk.chunk_id
+                for result in candidates
+            ]
+
+            score = recall_at_k(
+                retrieved_chunk_ids=candidate_chunk_ids,
+                relevant_chunk_ids=query.relevant_chunk_ids,
+                k=candidate_k,
+            )
+
+            recall_scores.append(score)
+
+        return sum(recall_scores) / len(recall_scores)
+
+    # ---------------------------------------------------------
+    # Hybrid + reranking evaluation
+    # ---------------------------------------------------------
 
     def evaluate_hybrid_with_reranking(
         self,
@@ -145,21 +233,29 @@ class RetrievalEvaluator:
         candidate_k: int = 10,
         reranker: CrossEncoderReranker | None = None,
     ) -> RetrievalEvaluation:
-        """Evaluate hybrid retrieval followed by production reranking."""
+        """Evaluate hybrid retrieval followed by heuristic reranking."""
 
         self._validate_cutoffs(k, candidate_k)
 
         if not self.evaluation_queries:
             return self._calculate_metrics([])
 
+        evaluation_k = self._evaluation_depth(k)
+
+        retrieval_k = min(
+            max(candidate_k, evaluation_k),
+            len(self.chunks),
+        )
+
         active_reranker = reranker or self.cross_encoder_reranker
 
         retrieved_results = []
 
         for query in self.evaluation_queries:
+
             candidates = self.hybrid_retriever.search(
                 query=query.query,
-                top_k=min(candidate_k, len(self.chunks)),
+                top_k=retrieval_k,
             )
 
             candidate_results = [
@@ -173,7 +269,7 @@ class RetrievalEvaluator:
             reranked_results = active_reranker.rerank(
                 query=query.query,
                 results=candidate_results,
-                top_k=k,
+                top_k=evaluation_k,
             )
 
             retrieved_results.append([
@@ -183,15 +279,24 @@ class RetrievalEvaluator:
 
         return self._calculate_metrics(retrieved_results)
 
+    # ---------------------------------------------------------
+    # RRF evaluation
+    # ---------------------------------------------------------
+
     def evaluate_rrf(
         self,
         k: int = 5,
     ) -> RetrievalEvaluation:
+
         return self.evaluate_weighted_rrf(
             k=k,
             bm25_weight=0.70,
             semantic_weight=0.30,
         )
+
+    # ---------------------------------------------------------
+    # Weighted RRF evaluation
+    # ---------------------------------------------------------
 
     def evaluate_weighted_rrf(
         self,
@@ -200,6 +305,9 @@ class RetrievalEvaluator:
         semantic_weight: float = 0.5,
         rrf_k: int = 60,
     ) -> RetrievalEvaluation:
+
+        evaluation_k = self._evaluation_depth(k)
+
         retriever = RRFHybridRetriever(
             self.chunks,
             bm25_retriever=self.bm25_retriever,
@@ -214,13 +322,17 @@ class RetrievalEvaluator:
                 result.chunk.chunk_id
                 for result in retriever.search(
                     query.query,
-                    k,
+                    evaluation_k,
                 )
             ]
             for query in self.evaluation_queries
         ]
 
         return self._calculate_metrics(retrieved_results)
+
+    # ---------------------------------------------------------
+    # RRF + reranking evaluation
+    # ---------------------------------------------------------
 
     def evaluate_rrf_with_reranking(
         self,
@@ -231,12 +343,19 @@ class RetrievalEvaluator:
         rrf_k: int = 60,
         reranker: CrossEncoderReranker | None = None,
     ) -> RetrievalEvaluation:
-        """Evaluate weighted RRF followed by production reranking."""
+        """Evaluate weighted RRF followed by heuristic reranking."""
 
         self._validate_cutoffs(k, candidate_k)
 
         if not self.evaluation_queries:
             return self._calculate_metrics([])
+
+        evaluation_k = self._evaluation_depth(k)
+
+        retrieval_k = min(
+            max(candidate_k, evaluation_k),
+            len(self.chunks),
+        )
 
         active_reranker = reranker or self.cross_encoder_reranker
 
@@ -252,9 +371,10 @@ class RetrievalEvaluator:
         retrieved_results = []
 
         for query in self.evaluation_queries:
+
             candidates = retriever.search(
                 query.query,
-                top_k=min(candidate_k, len(self.chunks)),
+                top_k=retrieval_k,
             )
 
             candidate_results = [
@@ -268,7 +388,7 @@ class RetrievalEvaluator:
             reranked_results = active_reranker.rerank(
                 query=query.query,
                 results=candidate_results,
-                top_k=k,
+                top_k=evaluation_k,
             )
 
             retrieved_results.append([
@@ -278,25 +398,25 @@ class RetrievalEvaluator:
 
         return self._calculate_metrics(retrieved_results)
 
+    # ---------------------------------------------------------
+    # Query diagnostics
+    # ---------------------------------------------------------
+
     def diagnose(
         self,
         strategy: str = "hybrid_reranked",
         k: int = 5,
         candidate_k: int = 10,
     ) -> list[QueryDiagnostic]:
-        """
-        Return per-question diagnostics for a retrieval strategy.
-
-        Supported strategies:
-        bm25, semantic, hybrid, hybrid_reranked,
-        rrf, rrf_reranked.
-        """
+        """Return per-query retrieval diagnostics."""
 
         if k <= 0:
             raise ValueError("k must be greater than zero")
 
         if candidate_k < k:
-            raise ValueError("candidate_k must be at least k")
+            raise ValueError(
+                "candidate_k must be at least k"
+            )
 
         retrieved_results = self._retrieve_for_strategy(
             strategy=strategy,
@@ -310,6 +430,7 @@ class RetrievalEvaluator:
             self.evaluation_queries,
             retrieved_results,
         ):
+
             relevant_ids = query.relevant_chunk_ids
 
             matched_ids = set(retrieved_ids) & relevant_ids
@@ -344,6 +465,10 @@ class RetrievalEvaluator:
 
         return diagnostics
 
+    # ---------------------------------------------------------
+    # Strategy-based retrieval for diagnostics
+    # ---------------------------------------------------------
+
     def _retrieve_for_strategy(
         self,
         strategy: str,
@@ -355,7 +480,9 @@ class RetrievalEvaluator:
         results = []
 
         for query in self.evaluation_queries:
+
             if strategy == "bm25":
+
                 retrieved = self.bm25_retriever.search(
                     query.query,
                     k,
@@ -367,6 +494,7 @@ class RetrievalEvaluator:
                 ]
 
             elif strategy == "semantic":
+
                 retrieved = self.semantic_searcher.search(
                     query.query,
                     k,
@@ -378,6 +506,7 @@ class RetrievalEvaluator:
                 ]
 
             elif strategy == "hybrid":
+
                 retrieved = self.hybrid_retriever.search(
                     query.query,
                     k,
@@ -389,6 +518,7 @@ class RetrievalEvaluator:
                 ]
 
             elif strategy == "hybrid_reranked":
+
                 candidates = self.hybrid_retriever.search(
                     query.query,
                     min(candidate_k, len(self.chunks)),
@@ -414,9 +544,8 @@ class RetrievalEvaluator:
                 ]
 
             elif strategy in {"rrf", "rrf_reranked"}:
-                retriever = self.rrf_retriever
 
-                candidates = retriever.search(
+                candidates = self.rrf_retriever.search(
                     query.query,
                     (
                         min(candidate_k, len(self.chunks))
@@ -426,6 +555,7 @@ class RetrievalEvaluator:
                 )
 
                 if strategy == "rrf_reranked":
+
                     candidate_results = [
                         RetrievalResult(
                             chunk=result.chunk,
@@ -444,13 +574,16 @@ class RetrievalEvaluator:
                         result.result.chunk.chunk_id
                         for result in reranked
                     ]
+
                 else:
+
                     chunk_ids = [
                         result.chunk.chunk_id
                         for result in candidates
                     ]
 
             else:
+
                 raise ValueError(
                     f"Unsupported retrieval strategy: {strategy}"
                 )
@@ -459,16 +592,27 @@ class RetrievalEvaluator:
 
         return results
 
+    # ---------------------------------------------------------
+    # Validation
+    # ---------------------------------------------------------
+
     @staticmethod
     def _validate_cutoffs(
         k: int,
         candidate_k: int,
     ) -> None:
+
         if k <= 0:
             raise ValueError("k must be greater than zero")
 
         if candidate_k < k:
-            raise ValueError("candidate_k must be at least k")
+            raise ValueError(
+                "candidate_k must be at least k"
+            )
+
+    # ---------------------------------------------------------
+    # Metric calculation
+    # ---------------------------------------------------------
 
     def _calculate_metrics(
         self,
@@ -476,6 +620,7 @@ class RetrievalEvaluator:
     ) -> RetrievalEvaluation:
 
         if not self.evaluation_queries:
+
             return RetrievalEvaluation(
                 recall_at_1=0.0,
                 recall_at_3=0.0,
@@ -487,11 +632,13 @@ class RetrievalEvaluator:
             )
 
         if len(retrieved_results) != len(self.evaluation_queries):
+
             raise ValueError(
                 "Retrieved results must match the number of evaluation queries"
             )
 
         def calculate_average_recall(cutoff: int) -> float:
+
             scores = [
                 recall_at_k(
                     retrieved_chunk_ids,
@@ -507,6 +654,7 @@ class RetrievalEvaluator:
             return sum(scores) / len(scores)
 
         def calculate_average_precision(cutoff: int) -> float:
+
             scores = [
                 precision_at_k(
                     retrieved_chunk_ids,

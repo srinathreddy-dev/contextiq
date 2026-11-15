@@ -1,3 +1,4 @@
+
 from dataclasses import dataclass
 
 
@@ -15,6 +16,7 @@ def recall_at_k(
     k: int,
 ) -> float:
     """Calculate recall among the top-k retrieved chunks."""
+
     if k <= 0:
         raise ValueError("k must be greater than zero")
 
@@ -32,6 +34,7 @@ def reciprocal_rank(
     relevant_chunk_ids: set[str],
 ) -> float:
     """Calculate reciprocal rank of the first relevant result."""
+
     if not relevant_chunk_ids:
         return 0.0
 
@@ -47,6 +50,7 @@ def mean_reciprocal_rank(
     retrieved_results: list[list[str]],
 ) -> float:
     """Calculate mean reciprocal rank across evaluation queries."""
+
     if not queries:
         return 0.0
 
@@ -68,24 +72,22 @@ def mean_reciprocal_rank(
 
     return sum(reciprocal_ranks) / len(reciprocal_ranks)
 
+
 def precision_at_k(
     retrieved_chunk_ids: list[str],
     relevant_chunk_ids: set[str],
     k: int,
 ) -> float:
-    """Calculate precision among the top-k retrieved chunks."""
+    """Calculate standard precision among the top-k retrieved chunks."""
 
     if k <= 0:
         raise ValueError("k must be greater than zero")
 
     retrieved = retrieved_chunk_ids[:k]
 
-    if not retrieved:
-        return 0.0
-
     relevant_retrieved = sum(
         chunk_id in relevant_chunk_ids
         for chunk_id in retrieved
     )
 
-    return relevant_retrieved / len(retrieved)
+    return relevant_retrieved / k
