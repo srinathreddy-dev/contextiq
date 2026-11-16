@@ -1,7 +1,7 @@
-# Enterprise AI Knowledge Platform
+# ContextIQ
 
-[![CI](https://github.com/srinathreddy-dev/enterprise-ai-knowledge-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/srinathreddy-dev/enterprise-ai-knowledge-platform/actions/workflows/ci.yml)
-[![Docker Build](https://github.com/srinathreddy-dev/enterprise-ai-knowledge-platform/actions/workflows/docker-build.yml/badge.svg)](https://github.com/srinathreddy-dev/enterprise-ai-knowledge-platform/actions/workflows/docker-build.yml)
+[![CI](https://github.com/srinathreddy-dev/contextiq/actions/workflows/ci.yml/badge.svg)](https://github.com/srinathreddy-dev/contextiq/actions/workflows/ci.yml)
+[![Docker Build](https://github.com/srinathreddy-dev/contextiq/actions/workflows/docker-build.yml/badge.svg)](https://github.com/srinathreddy-dev/contextiq/actions/workflows/docker-build.yml)
 
 A portfolio-scale enterprise Retrieval-Augmented Generation (RAG) platform that ingests PDF documents, retrieves relevant evidence through hybrid search, reranks candidate passages, and generates grounded answers with document and page references.
 
@@ -85,7 +85,7 @@ flowchart TD
 
 ### Architecture Overview
 
-![Enterprise AI Knowledge Platform Architecture](docs/images/architecture-overview.png)
+![ContextIQ Architecture](docs/images/architecture-overview.png)
 
 ## Technology stack
 
@@ -109,7 +109,7 @@ flowchart TD
 ## Repository layout
 
 ```text
-enterprise-ai-knowledge-platform/
+contextiq/
 ├── app/
 │   ├── core/             # Settings, logging, and metrics
 │   ├── evaluation/       # Retrieval and answer-quality evaluation
@@ -161,8 +161,8 @@ Docker Compose is the simplest way to start the full application and monitoring 
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/srinathreddy-dev/enterprise-ai-knowledge-platform.git
-cd enterprise-ai-knowledge-platform
+git clone https://github.com/srinathreddy-dev/contextiq.git
+cd contextiq
 ```
 
 ### 2. Configure environment variables
