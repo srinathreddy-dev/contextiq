@@ -1,5 +1,9 @@
 # ContextIQ
 
+**Enterprise Intelligence Platform**
+
+An intelligent RAG platform that transforms enterprise documents into searchable knowledge and grounded AI answers.
+
 [![CI](https://github.com/srinathreddy-dev/contextiq/actions/workflows/ci.yml/badge.svg)](https://github.com/srinathreddy-dev/contextiq/actions/workflows/ci.yml)
 [![Docker Build](https://github.com/srinathreddy-dev/contextiq/actions/workflows/docker-build.yml/badge.svg)](https://github.com/srinathreddy-dev/contextiq/actions/workflows/docker-build.yml)
 
