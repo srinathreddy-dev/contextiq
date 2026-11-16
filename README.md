@@ -83,6 +83,10 @@ flowchart TD
     R --> P
 ```
 
+### Architecture Overview
+
+![Enterprise AI Knowledge Platform Architecture](docs/images/architecture-overview.png)
+
 ## Technology stack
 
 | Area | Technologies |
